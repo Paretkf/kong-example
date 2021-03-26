@@ -1,0 +1,79 @@
+version: "3.9"
+
+services:
+  konga-database:
+    image: mysql:5.7
+    restart: always
+    container_name: konga-database
+    environment:
+      MYSQL_ROOT_PASSWORD: thisispassword
+      MYSQL_ROOT_HOST: "%"
+    ports:
+      - 3306:3306
+    healthcheck:
+      test: ["CMD", "mysqladmin" ,"ping", "-h", "localhost"]
+      timeout: 10s
+      retries: 10
+
+  kong-database:
+    image: cassandra:3.0
+    container_name: kong-database
+    healthcheck:
+      test: ["CMD-SHELL", "[ $$(nodetool statusgossip) = running ]"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  konga:
+    image: pantsel/konga:latest
+    container_name: konga
+    depends_on:
+      konga-database:
+        condition: service_healthy
+    environment:
+      DB_ADAPTER: mysql
+      DB_DATABASE: konga_database
+      DB_HOST: konga-database
+      DB_PASSWORD: thisispassword
+      DB_USER: root
+    links:
+      - konga-database
+    ports:
+      - 1337:1337/tcp
+
+  kong-migration:
+    image: kong:latest
+    restart: on-failure
+    container_name: kong-migration
+    depends_on:
+      kong-database:
+        condition: service_healthy
+    environment:
+      KONG_ADMIN_LISTEN: 0.0.0.0:8001
+      KONG_CASSANDRA_CONTACT_POINTS: kong-database
+      KONG_DATABASE: cassandra
+      KONG_NGINX_HTTP_RESOLVER: 8.8.8.8
+    links:
+      - kong-database:kong-database
+    command:
+      - kong
+      - migrations
+      - bootstrap
+      - --vv
+
+  kong:
+    image: kong:latest
+    container_name: kong
+    depends_on:
+      kong-database:
+        condition: service_healthy
+    environment:
+      KONG_ADMIN_LISTEN: 0.0.0.0:8001
+      KONG_CASSANDRA_CONTACT_POINTS: kong-database
+      KONG_DATABASE: cassandra
+      KONG_NGINX_HTTP_RESOLVER: 8.8.8.8
+    ports:
+      - 8001:8001
+      - 8000:8000
+    links:
+      - kong-database:kong-database
